@@ -72,8 +72,8 @@ writeConfigKey "smallnum" "${SMALLNUM}" "${USER_CONFIG_FILE}"
 
 echo -n "."
 # Read model data
-KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.[${PRODUCTVER}].kver" "${WORK_PATH}/platforms.yml")"
-KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.[${PRODUCTVER}].kpre" "${WORK_PATH}/platforms.yml")"
+KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kver" "${WORK_PATH}/platforms.yml")"
+KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
 
 # Sanity check
 if [ -z "${PLATFORM}" -o -z "${KVER}" ]; then
@@ -121,14 +121,16 @@ for PE in ${PATCHS[@]}; do
   [ ${RET} -ne 0 ] && exit 1
 done
 
-# Patch /etc/synoinfo.conf
+# Patch /etc/synoinfo.conf /etc.defaults/synoinfo.conf
 echo -n "."
 # Add serial number to synoinfo.conf, to help to recovery a installed DSM
 echo "Set synoinfo SN" >"${LOG_FILE}"
 _set_conf_kv "SN" "${SN}" "${RAMDISK_PATH}/etc/synoinfo.conf" >>"${LOG_FILE}" 2>&1 || exit 1
+_set_conf_kv "SN" "${SN}" "${RAMDISK_PATH}/etc.defaults/synoinfo.conf" >>"${LOG_FILE}" 2>&1 || exit 1
 for KEY in ${!SYNOINFO[@]}; do
   echo "Set synoinfo ${KEY}" >>"${LOG_FILE}"
   _set_conf_kv "${KEY}" "${SYNOINFO[${KEY}]}" "${RAMDISK_PATH}/etc/synoinfo.conf" >>"${LOG_FILE}" 2>&1 || exit 1
+  _set_conf_kv "${KEY}" "${SYNOINFO[${KEY}]}" "${RAMDISK_PATH}/etc.defaults/synoinfo.conf" >>"${LOG_FILE}" 2>&1 || exit 1
 done
 
 # Patch /sbin/init.post
@@ -137,12 +139,12 @@ grep -v -e '^[\t ]*#' -e '^$' "${WORK_PATH}/patch/config-manipulators.sh" >"${TM
 sed -e "/@@@CONFIG-MANIPULATORS-TOOLS@@@/ {" -e "r ${TMP_PATH}/rp.txt" -e 'd' -e '}' -i "${RAMDISK_PATH}/sbin/init.post"
 rm -f "${TMP_PATH}/rp.txt"
 touch "${TMP_PATH}/rp.txt"
+echo "_set_conf_kv 'SN' '${SN}' '/tmpRoot/etc/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
+echo "_set_conf_kv 'SN' '${SN}' '/tmpRoot/etc.defaults/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
 for KEY in ${!SYNOINFO[@]}; do
   echo "_set_conf_kv '${KEY}' '${SYNOINFO[${KEY}]}' '/tmpRoot/etc/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
   echo "_set_conf_kv '${KEY}' '${SYNOINFO[${KEY}]}' '/tmpRoot/etc.defaults/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
 done
-echo "_set_conf_kv 'SN' '${SN}' '/tmpRoot/etc/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
-echo "_set_conf_kv 'SN' '${SN}' '/tmpRoot/etc.defaults/synoinfo.conf'" >>"${TMP_PATH}/rp.txt"
 sed -e "/@@@CONFIG-GENERATED@@@/ {" -e "r ${TMP_PATH}/rp.txt" -e 'd' -e '}' -i "${RAMDISK_PATH}/sbin/init.post"
 rm -f "${TMP_PATH}/rp.txt"
 
@@ -152,7 +154,7 @@ installModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}" "${
 
 echo -n "."
 # Copying fake modprobe
-cp -f "${WORK_PATH}/patch/iosched-trampoline.sh" "${RAMDISK_PATH}/usr/sbin/modprobe"
+[ $(echo "${KVER:-4}" | cut -d'.' -f1) -lt 5 ] && cp -f "${WORK_PATH}/patch/iosched-trampoline.sh" "${RAMDISK_PATH}/usr/sbin/modprobe"
 # Copying LKM to /usr/lib/modules
 gzip -dc "${LKMS_PATH}/rp-${PLATFORM}-$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}-${LKM}.ko.gz" >"${RAMDISK_PATH}/usr/lib/modules/rp.ko" 2>"${LOG_FILE}" || exit 1
 

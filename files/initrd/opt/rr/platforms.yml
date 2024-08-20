@@ -11,7 +11,6 @@ synoinfo: &synoinfo
   support_oob_ctl: "no"
   support_syno_hybrid_raid: "no"
   supportraidgroup: "no"
-  HddEnableDynamicPower: "yes"
   enableRCPower: "yes"
   support_fan: "no"
   supportadt7490: "no"
@@ -23,8 +22,11 @@ platforms:
     dt: false
     flags:
       - "movbe"
+    noflags:
+      - "x2apic"
     synoinfo:
       <<: *synoinfo
+      HddEnableDynamicPower: "no"
     productvers:
       "7.0":
         kver: "4.4.180"
@@ -104,6 +106,8 @@ platforms:
         kver: "4.4.302"
   geminilake:
     dt: true
+    noflags:
+      - "x2apic"
     synoinfo:
       <<: *synoinfo
     productvers:
@@ -115,6 +119,8 @@ platforms:
         kver: "4.4.302"
   purley:
     dt: true
+    noflags:
+      - "x2apic"
     synoinfo:
       <<: *synoinfo
       supportsas: "no"

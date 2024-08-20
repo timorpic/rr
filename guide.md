@@ -2,7 +2,7 @@
 # ENV:
 * ### 常用工具:
    * telnet 工具 putty (下载: https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html)
-   * ssh 工具 FinalShell (下载: https://www.hostbuf.com/t/988.html)  
+   * ssh 工具 WindTerm (下载: https://github.com/kingToolbox/WindTerm)  
    * sftp 工具 WinSCP (下载: https://winscp.net/eng/index.php)
    * 文本编辑工具 Notepad3 (下载: https://github.com/rizonesoft/Notepad3/releases)
    * 镜像写盘工具 Rufus (下载: https://rufus.ie/zh/)
@@ -115,15 +115,19 @@
     ```
 * 群晖 opkg 包管理:
     ```shell
-    wget -O - http://bin.entware.net/x64-k3.2/installer/generic.sh | /bin/sh
+    curl -#kL http://bin.entware.net/x64-k3.2/installer/generic.sh | /bin/sh
     /opt/bin/opkg update
     /opt/bin/opkg install rename
     ```
 * 群晖 ipkg 包管理:
     ```shell
-    wget http://ipkg.nslu2-linux.org/feeds/optware/syno-i686/cross/unstable/syno-i686-bootstrap_1.2-7_i686.xsh | /bin/sh
+    curl -#kL http://ipkg.nslu2-linux.org/feeds/optware/syno-i686/cross/unstable/syno-i686-bootstrap_1.2-7_i686.xsh | /bin/sh
     ipkg update
     ipkg install lm-sensors
+    ```
+* 群晖 python pip 包管理:
+    ```shell
+    curl -#kL https://bootstrap.pypa.io/get-pip.py | python3
     ```
 
 ## DEBUG
@@ -143,11 +147,22 @@
   lsmod                                            # 查看已加载驱动
   lsusb                                            # 查看 USB 设备
   lsblk                                            # 查看磁盘设备
-  lspci -Qnn                                       # 查看 PCI 设备
+  lspci -Qnnk                                      # 查看 PCI 设备
 
   # 驱动相关
   ls -ld /sys/class/net/*/device/driver            # 查看已加载网卡和对应驱动
   cat /sys/class/net/*/address                     # 查看已加载网卡的 MAC 地址
+
+  # 串口
+  cat /proc/tty/drivers                            # 查看串口属性
+  cat /proc/tty/driver/serial                      # 查看串口属性
+  stty -F /dev/ttyS0 -a                            # 查看串口参数
+  stty -F /dev/ttyS0 ispeed 115200 ospeed 115200 cs8 -parenb -cstopb -echo  # 设置串口参数
+  stty size                                        # 打印终端的行数和列数
+  echo helloworld >/dev/ttyS0                      # 向串口发送数据
+  cat /dev/ttyS0                                   # 读取串口数据
+  getty -L /dev/ttyS0 115200                       # 启动串口终端
+  agetty -L /dev/ttyS0 115200                      # 启动串口终端
 
   # 磁盘相关
   fdisk -l                                         # 查看硬盘信息
@@ -194,6 +209,14 @@
   mdadm --grow /dev/md0 --level=5                  # 将 Raid 0 设备的级别改变为 RAID 5
   mdadm --zero-superblock /dev/sda1                # 清除 sda1 磁盘分区的 RAID 超级块 (使这个磁盘分区不再被识别为 RAID 设备的一部分)
 
+  # eudev 
+  udevadm control --reload-rules                   # 重新加载 udev 规则
+  udevadm trigger                                  # 触发 udev 事件
+  udevadm info --query all --name /dev/sda1        # 查看 udev 属性
+  udevadm info --query all --path /sys/class/net/eth0          # 查看 udev 属性
+  udevadm monitor --property --udev                # 监控 udev 事件
+  udevadm test /dev/sda1                           # 测试 udev 规则
+
   # 服务相关
   journalctl -xe                                   # 查看服务日志
   systemctl                                        # 查看服务
@@ -208,6 +231,17 @@
   systemctl disable cpufreq.service                # 永久停止 CPU 频率调节器
   netstat -tunlp                                   # 查看端口  
   lsof -i :7681                                    # 查看 7681 端口占用情况
+
+  # CPU
+  cat /sys/devices/system/cpu/cpufreq/boost        # 查看 CPU 睿频状态
+  echo 1 > /sys/devices/system/cpu/cpufreq/boost   # 开启 CPU 睿频
+  echo 0 > /sys/devices/system/cpu/cpufreq/boost   # 关闭 CPU 睿频
+  cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_available_governors # 查看可用的 CPU 频率调节器状态
+  cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor            # 查看 CPU 频率调节器状态
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq            # 查看 CPU 当前频率 
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq            # 查看 CPU 最大频率
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq            # 查看 CPU 最小频率
+
 
   # 日志相关
   dmesg                                            # 内核日志

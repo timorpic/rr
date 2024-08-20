@@ -7,6 +7,7 @@ set -e
 . ${WORK_PATH}/include/addons.sh
 
 [ -z "${LOADER_DISK}" ] && die "$(TEXT "Loader is not init!")"
+checkBootLoader || die "$(TEXT "The loader is corrupted, please rewrite it!")"
 
 # Shows title
 clear
@@ -61,8 +62,10 @@ initConfigKey "synoinfo" "{}" "${USER_CONFIG_FILE}"
 initConfigKey "addons" "{}" "${USER_CONFIG_FILE}"
 initConfigKey "addons.acpid" "" "${USER_CONFIG_FILE}"
 initConfigKey "addons.mountloader" "" "${USER_CONFIG_FILE}"
+initConfigKey "addons.powersched" "" "${USER_CONFIG_FILE}"
 initConfigKey "addons.reboottoloader" "" "${USER_CONFIG_FILE}"
 initConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
+initConfigKey "modblacklist" "evbug,cdc_ether" "${USER_CONFIG_FILE}"
 
 # for update
 if [ -f "${PART2_PATH}/GRUB_VER" ]; then
@@ -85,10 +88,20 @@ if [ ! "LOCALBUILD" = "${LOADER_DISK}" ]; then
     MACR="$(cat /sys/class/net/${ETH}/address 2>/dev/null | sed 's/://g')"
     IPR="$(readConfigKey "network.${MACR}" "${USER_CONFIG_FILE}")"
     if [ -n "${IPR}" ]; then
-      ip addr add ${IPC}/24 dev ${ETH}
+      IFS='/' read -r -a IPRA <<<"$IPR"
+      ip addr flush dev $ETH
+      ip addr add ${IPRA[0]}/${IPRA[1]:-"255.255.255.0"} dev $ETH
+      if [ -n "${IPRA[2]}" ]; then
+        ip route add default via ${IPRA[2]} dev $ETH
+      fi
+      if [ -n "${IPRA[3]:-${IPRA[2]}}" ]; then
+        sed -i "/nameserver ${IPRA[3]:-${IPRA[2]}}/d" /etc/resolv.conf
+        echo "nameserver ${IPRA[3]:-${IPRA[2]}}" >>/etc/resolv.conf
+      fi
       sleep 1
     fi
     [ "${ETH::3}" = "eth" ] && ethtool -s ${ETH} wol g 2>/dev/null || true
+    [ "${ETH::3}" = "eth" ] && ethtool -K ${ETH} rxhash off 2>/dev/null || true
   done
 fi
 
@@ -98,7 +111,7 @@ PID="0x0001"
 TYPE="DoM"
 BUS=$(getBus "${LOADER_DISK}")
 
-BUSLIST="usb sata scsi nvme mmc"
+BUSLIST="usb sata sas scsi nvme mmc ide virtio vmbus xen"
 if [ "${BUS}" = "usb" ]; then
   VID="0x$(udevadm info --query property --name ${LOADER_DISK} 2>/dev/null | grep ID_VENDOR_ID | cut -d= -f2)"
   PID="0x$(udevadm info --query property --name ${LOADER_DISK} 2>/dev/null | grep ID_MODEL_ID | cut -d= -f2)"
@@ -108,7 +121,7 @@ elif ! echo "${BUSLIST}" | grep -wq "${BUS}"; then
     echo "LOCALBUILD MODE"
     TYPE="PC"
   else
-    die "$(TEXT "Loader disk neither USB or SATA/SCSI/NVME/MMC DoM")"
+    die "$(printf "$(TEXT "The boot disk does not support the current %s, only %s DoM is supported.")" "${BUS}" "${BUSLIST// /\/}")"
   fi
 fi
 
@@ -163,6 +176,9 @@ while [ ${COUNT} -lt 30 ]; do
   echo -n "."
   sleep 1
 done
+
+[ ! -f /var/run/dhcpcd/pid ] && /etc/init.d/S41dhcpcd restart >/dev/null 2>&1 || true
+
 echo "$(TEXT "Waiting IP.")"
 for N in ${ETHX}; do
   COUNT=0
@@ -222,7 +238,7 @@ if [ "${DSMLOGO}" = "true" -a -c "/dev/fb0" -a ! "LOCALBUILD" = "${LOADER_DISK}"
 fi
 
 # Check memory
-RAM=$(free -m 2>/dev/null | awk '/Mem:/{print $2}')
+RAM=$(awk '/MemTotal:/ {printf "%.0f", $2 / 1024}' /proc/meminfo 2>/dev/null)
 if [ ${RAM:-0} -le 3500 ]; then
   echo -e "\033[1;33m$(TEXT "You have less than 4GB of RAM, if errors occur in loader creation, please increase the amount of memory.")\033[0m\n"
 fi

@@ -9,6 +9,10 @@ set -e
 # Sanity check
 loaderIsConfigured || die "$(TEXT "Loader is not configured!")"
 
+# Clear logs for dbgutils addons
+rm -rf "${PART1_PATH}/logs" >/dev/null 2>&1 || true
+rm -rf /sys/fs/pstore/* >/dev/null 2>&1 || true
+
 # Check if machine has EFI
 [ -d /sys/firmware/efi ] && EFI=1 || EFI=0
 
@@ -62,7 +66,7 @@ LKM="$(readConfigKey "lkm" "${USER_CONFIG_FILE}")"
 
 DMI="$(dmesg 2>/dev/null | grep -i "DMI:" | sed 's/\[.*\] DMI: //i')"
 CPU="$(echo $(cat /proc/cpuinfo 2>/dev/null | grep 'model name' | uniq | awk -F':' '{print $2}'))"
-MEM="$(free -m 2>/dev/null | grep -i mem | awk '{print $2}') MB"
+MEM="$(awk '/MemTotal:/ {printf "%.0f", $2 / 1024}' /proc/meminfo 2>/dev/null) MB"
 
 echo -e "$(TEXT "Model:   ") \033[1;36m${MODEL}(${PLATFORM})\033[0m"
 echo -e "$(TEXT "Version: ") \033[1;36m${PRODUCTVER}(${BUILDNUM}$([ ${SMALLNUM:-0} -ne 0 ] && echo "u${SMALLNUM}"))\033[0m"
@@ -76,7 +80,7 @@ if ! readConfigMap "addons" "${USER_CONFIG_FILE}" | grep -q nvmesystem; then
   HASATA=0
   for D in $(lsblk -dpno NAME); do
     [ "${D}" = "${LOADER_DISK}" ] && continue
-    if [ "$(getBus "${D}")" = "sata" -o "$(getBus "${D}")" = "scsi" ]; then
+    if echo "sata sas scsi" | grep -qw "$(getBus "${D}")"; then
       HASATA=1
       break
     fi
@@ -91,6 +95,7 @@ MAC1="$(readConfigKey "mac1" "${USER_CONFIG_FILE}")"
 MAC2="$(readConfigKey "mac2" "${USER_CONFIG_FILE}")"
 KERNELPANIC="$(readConfigKey "kernelpanic" "${USER_CONFIG_FILE}")"
 EMMCBOOT="$(readConfigKey "emmcboot" "${USER_CONFIG_FILE}")"
+MODBLACKLIST="$(readConfigKey "modblacklist" "${USER_CONFIG_FILE}")"
 
 declare -A CMDLINE
 
@@ -119,8 +124,8 @@ else
   CMDLINE['noefi']=""
 fi
 DT="$(readConfigKey "platforms.${PLATFORM}.dt" "${WORK_PATH}/platforms.yml")"
-KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.[${PRODUCTVER}].kver" "${WORK_PATH}/platforms.yml")"
-KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.[${PRODUCTVER}].kpre" "${WORK_PATH}/platforms.yml")"
+KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kver" "${WORK_PATH}/platforms.yml")"
+KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
 if [ $(echo "${KVER:-4}" | cut -d'.' -f1) -lt 5 ]; then
   if [ ! "${BUS}" = "usb" ]; then
     SZ=$(blockdev --getsz ${LOADER_DISK} 2>/dev/null) # SZ=$(cat /sys/block/${LOADER_DISK/\/dev\//}/size)
@@ -141,33 +146,51 @@ else
   CMDLINE["syno_hdd_detect"]="0"
   CMDLINE["syno_hdd_powerup_seq"]="0"
 fi
-CMDLINE['panic']="${KERNELPANIC:-0}"
-CMDLINE['console']="ttyS0,115200n8"
-# CMDLINE['no_console_suspend']="1"
-CMDLINE['consoleblank']="600"
-CMDLINE['earlyprintk']=""
-CMDLINE['earlycon']="uart8250,io,0x3f8,115200n8"
-CMDLINE['root']="/dev/md0"
-CMDLINE['skip_vender_mac_interfaces']="0,1,2,3,4,5,6,7"
-CMDLINE['loglevel']="15"
-CMDLINE['log_buf_len']="32M"
 CMDLINE["HddHotplug"]="1"
 CMDLINE["vender_format_version"]="2"
+CMDLINE['skip_vender_mac_interfaces']="0,1,2,3,4,5,6,7"
+
+CMDLINE['earlyprintk']=""
+CMDLINE['earlycon']="uart8250,io,0x3f8,115200n8"
+CMDLINE['console']="ttyS0,115200n8"
+CMDLINE['consoleblank']="600"
+# CMDLINE['no_console_suspend']="1"
+CMDLINE['root']="/dev/md0"
+CMDLINE['rootwait']=""
+CMDLINE['loglevel']="15"
+CMDLINE['log_buf_len']="32M"
+CMDLINE['panic']="${KERNELPANIC:-0}"
+CMDLINE['pcie_aspm']="off"
+CMDLINE['modprobe.blacklist']="${MODBLACKLIST}"
 
 # if [ -n "$(ls /dev/mmcblk* 2>/dev/null)" ] && [ ! "${BUS}" = "mmc" ] && [ ! "${EMMCBOOT}" = "true" ]; then
-#   [ ! "${CMDLINE['modprobe.blacklist']}" = "" ] && CMDLINE['modprobe.blacklist']+=","
-#   CMDLINE['modprobe.blacklist']+="sdhci,sdhci_pci,sdhci_acpi"
+#   if ! echo "${CMDLINE['modprobe.blacklist']}" | grep -q "sdhci"; then
+#     [ ! "${CMDLINE['modprobe.blacklist']}" = "" ] && CMDLINE['modprobe.blacklist']+=","
+#     CMDLINE['modprobe.blacklist']+="sdhci,sdhci_pci,sdhci_acpi"
+#   fi
 # fi
 if [ "${DT}" = "true" ] && ! echo "epyc7002 purley broadwellnkv2" | grep -wq "${PLATFORM}"; then
-  [ ! "${CMDLINE['modprobe.blacklist']}" = "" ] && CMDLINE['modprobe.blacklist']+=","
-  CMDLINE['modprobe.blacklist']+="mpt3sas"
+  if ! echo "${CMDLINE['modprobe.blacklist']}" | grep -q "mpt3sas"; then
+    [ ! "${CMDLINE['modprobe.blacklist']}" = "" ] && CMDLINE['modprobe.blacklist']+=","
+    CMDLINE['modprobe.blacklist']+="mpt3sas"
+  fi
+#else
+#  CMDLINE['scsi_mod.scan']="sync"  # TODO: redpill panic of vmware scsi? (add to cmdline)
 fi
-if echo "epyc7002 apollolake geminilake" | grep -wq "${PLATFORM}"; then
+
+# CMDLINE['kvm.ignore_msrs']="1"
+# CMDLINE['kvm.report_ignored_msrs']="0"
+
+if echo "apollolake geminilake" | grep -wq "${PLATFORM}"; then
   CMDLINE["intel_iommu"]="igfx_off"
 fi
 if echo "purley broadwellnkv2" | grep -wq "${PLATFORM}"; then
   CMDLINE["SASmodel"]="1"
 fi
+
+while IFS=': ' read KEY VALUE; do
+  [ -n "${KEY}" ] && CMDLINE["network.${KEY}"]="${VALUE}"
+done <<<$(readConfigMap "network" "${USER_CONFIG_FILE}")
 
 while IFS=': ' read KEY VALUE; do
   [ -n "${KEY}" ] && CMDLINE["${KEY}"]="${VALUE}"
@@ -187,11 +210,13 @@ DIRECT="$(readConfigKey "directboot" "${USER_CONFIG_FILE}")"
 if [ "${DIRECT}" = "true" ]; then
   CMDLINE_DIRECT=$(echo ${CMDLINE_LINE} | sed 's/>/\\\\>/g') # Escape special chars
   grub-editenv ${USER_GRUBENVFILE} set dsm_cmdline="${CMDLINE_DIRECT}"
-  echo -e "\033[1;33m$(TEXT "Reboot to boot directly in DSM")\033[0m"
   grub-editenv ${USER_GRUBENVFILE} set next_entry="direct"
+  echo -e "\033[1;33m$(TEXT "Reboot to boot directly in DSM")\033[0m"
   reboot
   exit 0
 else
+  grub-editenv ${USER_GRUBENVFILE} unset dsm_cmdline
+  grub-editenv ${USER_GRUBENVFILE} unset next_entry
   ETHX=$(ls /sys/class/net/ 2>/dev/null | grep -v lo) || true
   echo "$(printf "$(TEXT "Detected %s network cards.")" "$(echo ${ETHX} | wc -w)")"
   echo -en "$(TEXT "Checking Connect.")"
@@ -213,6 +238,9 @@ else
     echo -n "."
     sleep 1
   done
+
+  [ ! -f /var/run/dhcpcd/pid ] && /etc/init.d/S41dhcpcd restart >/dev/null 2>&1 || true
+
   echo "$(TEXT "Waiting IP.")"
   for N in ${ETHX}; do
     COUNT=0
@@ -247,12 +275,12 @@ else
   done
   BOOTWAIT="$(readConfigKey "bootwait" "${USER_CONFIG_FILE}")"
   [ -z "${BOOTWAIT}" ] && BOOTWAIT=10
-  w 2>/dev/null | awk '{print $1" "$2" "$4" "$5" "$6}' >WB
+  busybox w 2>/dev/null | awk '{print $1" "$2" "$4" "$5" "$6}' >WB
   MSG=""
   while test ${BOOTWAIT} -ge 0; do
     MSG="$(printf "\033[1;33m$(TEXT "%2ds (Changing access(ssh/web) status will interrupt boot)")\033[0m" "${BOOTWAIT}")"
     echo -en "\r${MSG}"
-    w 2>/dev/null | awk '{print $1" "$2" "$4" "$5" "$6}' >WC
+    busybox w 2>/dev/null | awk '{print $1" "$2" "$4" "$5" "$6}' >WC
     if ! diff WB WC >/dev/null 2>&1; then
       echo -en "\r\033[1;33m$(TEXT "access(ssh/web) status has changed and booting is interrupted.")\033[0m\n"
       rm -f WB WC
@@ -279,21 +307,24 @@ else
   fi
 
   # Executes DSM kernel via KEXEC
-  KEXECARGS=""
+  KEXECARGS="-a"
   if [ $(echo "${KVER:-4}" | cut -d'.' -f1) -lt 4 ] && [ ${EFI} -eq 1 ]; then
     echo -e "\033[1;33m$(TEXT "Warning, running kexec with --noefi param, strange things will happen!!")\033[0m"
-    KEXECARGS="--noefi"
+    KEXECARGS+=" --noefi"
   fi
   kexec ${KEXECARGS} -l "${MOD_ZIMAGE_FILE}" --initrd "${MOD_RDGZ_FILE}" --command-line="${CMDLINE_LINE}" >"${LOG_FILE}" 2>&1 || dieLog
+
   echo -e "\033[1;37m$(TEXT "Booting ...")\033[0m"
-  for T in $(w 2>/dev/null | grep -v "TTY" | awk -F' ' '{print $2}'); do
+  # show warning message
+  for T in $(busybox w 2>/dev/null | grep -v 'TTY' | awk '{print $2}'); do
     [ -w "/dev/${T}" ] && echo -e "\n\033[1;43m$(TEXT "[This interface will not be operational. Please wait a few minutes.\nFind DSM via http://find.synology.com/ or Synology Assistant and connect.]")\033[0m\n" >"/dev/${T}" 2>/dev/null || true
   done
 
-  # Clear logs for dbgutils addons
-  rm -rf "${PART1_PATH}/logs" >/dev/null 2>&1 || true
+  # # Unload all network interfaces
+  # for D in $(readlink /sys/class/net/*/device/driver); do rmmod -f "$(basename ${D})" 2>/dev/null || true; done
 
+  # Reboot
   KERNELWAY="$(readConfigKey "kernelway" "${USER_CONFIG_FILE}")"
-  [ "${KERNELWAY}" = "kexec" ] && kexec -i -a -e || poweroff
+  [ "${KERNELWAY}" = "kexec" ] && kexec -e || poweroff
   exit 0
 fi
